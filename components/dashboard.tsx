@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useUser } from "@clerk/nextjs";
@@ -14,6 +14,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { MedicalLoader } from "@/components/ui/medical-loader";
 import { useRole } from "@/lib/useRole";
 import { ROLES } from "@/lib/roles";
@@ -1060,6 +1067,266 @@ function RegisteredRecords() {
   );
 }
 
+function AdminInterface() {
+  const { user } = useUser();
+  const { signOut } = useClerk();
+  const [serverVerifiedRole, setServerVerifiedRole] = useState<
+    string | undefined
+  >(undefined);
+  const [isVerifying, setIsVerifying] = useState(true);
+  const [selectedLocation, setSelectedLocation] = useState<string>("");
+
+  // Verify role server-side first
+  useEffect(() => {
+    fetch("/api/verify-role")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.hasPermission) {
+          setServerVerifiedRole(data.role);
+        }
+        setIsVerifying(false);
+      })
+      .catch((err) => {
+        console.warn("Could not verify role:", err);
+        setIsVerifying(false);
+      });
+  }, []);
+
+  // Fetch all registered records
+  const records = useQuery(
+    api.reports.getRegisteredRecords,
+    isVerifying ? "skip" : serverVerifiedRole ? { serverVerifiedRole } : {}
+  );
+
+  // Extract unique locations from records
+  const locations = React.useMemo(() => {
+    if (!Array.isArray(records)) return [];
+    const locationSet = new Set<string>();
+    records.forEach((record) => {
+      if (record.location && record.location.trim()) {
+        locationSet.add(record.location.trim());
+      }
+    });
+    return Array.from(locationSet).sort();
+  }, [records]);
+
+  // Filter records by selected location
+  const filteredRecords = React.useMemo(() => {
+    if (!Array.isArray(records)) return [];
+    if (!selectedLocation) return [];
+    return records.filter(
+      (record) => record.location && record.location.trim() === selectedLocation
+    );
+  }, [records, selectedLocation]);
+
+  if (records === undefined) {
+    return <MedicalLoader message="Loading admin data..." size="md" />;
+  }
+
+  if (!Array.isArray(records)) {
+    return (
+      <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+        <p className="text-sm text-yellow-800 font-medium">
+          ⚠️ Unable to load records. Please check your permissions.
+        </p>
+      </div>
+    );
+  }
+
+  const userName =
+    user?.fullName ||
+    (user?.firstName && user?.lastName
+      ? `${user.firstName} ${user.lastName}`
+      : user?.firstName || user?.primaryEmailAddress?.emailAddress || "Admin");
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 text-white shadow-lg">
+        <div className="p-6 lg:p-8">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h1 className="text-3xl lg:text-4xl font-bold flex items-center gap-3">
+                  <span>Admin Control Panel ⚙️</span>
+                </h1>
+                <p className="text-blue-100 text-lg mt-2">
+                  Welcome Admin, <span className="text-white font-semibold">{userName}</span>
+                </p>
+                <p className="text-blue-200 text-sm mt-1">
+                  View and manage ASHA portal registered records by location
+                </p>
+              </div>
+              <Button
+                onClick={() => signOut({ redirectUrl: window.location.origin })}
+                className="text-white font-semibold rounded-full px-5 py-2
+                   bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500
+                   hover:from-red-600 hover:via-red-500 hover:to-red-400
+                   shadow-md hover:shadow-lg hover:shadow-red-500/40
+                   transition-all duration-300 active:scale-95"
+              >
+                Logout
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-6 lg:px-8 mt-8">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-2xl border border-gray-200/50 p-6 lg:p-8">
+          {/* Location Selector */}
+          <div className="mb-6">
+            <Label
+              htmlFor="location-select"
+              className="text-lg font-semibold text-gray-700 mb-3 block"
+            >
+              Select Location
+            </Label>
+            <Select
+              value={selectedLocation}
+              onValueChange={setSelectedLocation}
+            >
+              <SelectTrigger className="w-full md:w-96 h-12 text-base">
+                <SelectValue placeholder="Choose a location to view records" />
+              </SelectTrigger>
+              <SelectContent>
+                {locations.length === 0 ? (
+                  <SelectItem value="no-locations" disabled>
+                    No locations available
+                  </SelectItem>
+                ) : (
+                  locations.map((location) => (
+                    <SelectItem key={location} value={location}>
+                      {location}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            {locations.length > 0 && (
+              <p className="text-sm text-gray-500 mt-2">
+                {locations.length} location{locations.length !== 1 ? "s" : ""}{" "}
+                available
+              </p>
+            )}
+          </div>
+
+          {/* Records Display */}
+          {!selectedLocation ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500 text-lg">
+                Please select a location to view disease records
+              </p>
+            </div>
+          ) : filteredRecords.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500 text-lg">
+                No records found for location: <strong>{selectedLocation}</strong>
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-800">
+                  Records for: <span className="text-blue-600">{selectedLocation}</span>
+                </h2>
+                <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                  {filteredRecords.length} record{filteredRecords.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+
+              {filteredRecords.map((record) => (
+                <Card
+                  key={record._id}
+                  className="bg-white border-2 border-gray-200 shadow-lg hover:shadow-xl transition-shadow"
+                >
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <CardTitle className="text-2xl text-gray-800">
+                          {record.diseaseName}
+                        </CardTitle>
+                        <CardDescription className="mt-2">
+                          Registered:{" "}
+                          {new Date(
+                            record.updatedAt || record.createdAt
+                          ).toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          })}
+                        </CardDescription>
+                      </div>
+                      <span className="px-3 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-md">
+                        Registered
+                      </span>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* Description */}
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                        Description:
+                      </h3>
+                      <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded-md border border-gray-200">
+                        {record.description}
+                      </p>
+                    </div>
+
+                    {/* Medical Supplies */}
+                    {record.medicalSupplies &&
+                      record.medicalSupplies.length > 0 && (
+                        <div>
+                          <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                            Medical Supplies Needed:
+                          </h3>
+                          <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-md border border-blue-200">
+                            <ul className="space-y-2">
+                              {record.medicalSupplies.map(
+                                (supply: MedicalSupply, index: number) => (
+                                  <li
+                                    key={index}
+                                    className="flex items-center justify-between bg-white p-3 rounded-md shadow-sm"
+                                  >
+                                    <span className="text-sm font-medium text-gray-700">
+                                      {supply.name}
+                                    </span>
+                                    <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold">
+                                      Quantity: {supply.quantity}
+                                    </span>
+                                  </li>
+                                )
+                              )}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+
+                    {/* Image if available */}
+                    {record.imageUrl && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                          Disease Image:
+                        </h3>
+                        <img
+                          src={record.imageUrl}
+                          alt={record.diseaseName}
+                          className="w-full max-w-md h-64 object-cover rounded-lg border-2 border-gray-300 shadow-md"
+                        />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Dashboard({ mode }: { mode: "admin" | "asha" | "citizen" }) {
   const { user, isLoaded } = useUser();
   const { signOut } = useClerk();
@@ -1281,27 +1548,5 @@ export function Dashboard({ mode }: { mode: "admin" | "asha" | "citizen" }) {
   }
 
   // Admin view
-  if (!data || data.type !== "detailed") {
-    return (
-      <MedicalLoader
-        message="Loading health data..."
-        size="lg"
-        className="min-h-[400px]"
-      />
-    );
-  }
-
-  return (
-    <div className="p-6 space-y-4">
-      <h2 className="text-xl font-semibold">Admin Control Panel ⚙️</h2>
-      <ul className="list-disc pl-4">
-        <li>Monitor all village health reports</li>
-        <li>View real-time outbreak trends</li>
-        <li>Manage ASHA users and permissions</li>
-      </ul>
-      <pre className="bg-gray-100 p-3 rounded-md text-sm">
-        {JSON.stringify(data.reports, null, 2)}
-      </pre>
-    </div>
-  );
+  return <AdminInterface />;
 }
